@@ -4,13 +4,14 @@ services:
 
   mongo:
     image: mongo
+    container_name: mongo
     restart: always
     ports:
       - 27017:27017
-    #env_file: ./.env
-    #environment:
-    #  MONGO_INITDB_ROOT_USERNAME: $MONGO_INITDB_ROOT_USERNAME
-    #  MONGO_INITDB_ROOT_PASSWORD: $MONGO_INITDB_ROOT_PASSWORD
+    #env_file: .env
+    environment:
+     MONGO_INITDB_ROOT_USERNAME: admin
+     MONGO_INITDB_ROOT_PASSWORD: admin
     networks: 
       - smart_uis
 
@@ -21,39 +22,88 @@ services:
       - 8081:8081
     depends_on:
       - mongo
-    #env_file: ./.env
-    #environment:
-    #  ME_CONFIG_MONGODB_ADMINUSERNAME: $MONGO_INITDB_ROOT_USERNAME
-    #  ME_CONFIG_MONGODB_ADMINPASSWORD: $MONGO_INITDB_ROOT_PASSWORD
-    #  ME_CONFIG_MONGODB_URL: mongodb://root:example@mongo:27017/
+    #env_file: .env
+    environment:
+    # ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+    # ME_CONFIG_MONGODB_ADMINPASSWORD: admin
+      ME_CONFIG_MONGODB_URL: mongodb://admin:admin@mongo:27017
     networks: 
       - smart_uis
+ 
+  # mqtt_broker:
+  #   container_name: mqtt_broker
+  #   image: eclipse-mosquitto
+  #   restart: always
+  #   ports:
+  #     - 1883:1883
+  #     # - 61616:61616 # WebSockets para el back de data
+  #   networks: 
+  #     - smart_uis
+  #   volumes:
+  #     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
-  mqtt_broker:
-    container_name: mqtt_broker
-    image: eclipse-mosquitto
+  activemq:
+    image: symptoma/activemq:latest
+    container_name: activemq
+    ports: 
+      - 8161:8161 #Web admin
+      - 61616:61616 #tcp conection for microservices
+
+  mysqlDb:
+    image: mysql:5.7
+    container_name: mysqlDb
     restart: always
     ports:
-      - 1883:1883
+      - 3306:3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=adminroot
+      - MYSQL_DATABASE=iot
+      - MYSQL_USER=smartuis
+      - MYSQL_PASSWORD=adminsmartuis
+    volumes:
+      - ./mysql:/docker-entrypoint-initdb.d
     networks: 
       - smart_uis
-    volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
   
+  admin-microservice:
+    container_name: admin-microservice
+    depends_on:
+      - activemq
+      - mysqlDb
+    build: admin-microservice
+    ports:
+      - 8090:8090
+    # env_file: .env
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysqlDb:3306/iot?autoReconnect=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=smartuis
+      - SPRING_DATASOURCE_PASSWORD=adminsmartuis
+      - BROKER_URL=tcp://activemq:61616
+    networks:
+      - smart_uis
+    
+
   data_microservice:
     container_name: data_microservice
     restart: always
     depends_on:
-      - mqtt_broker
+      - activemq
       - mongo
+      - admin-microservice
     build: data_microservice
     ports:
       - 8091:8091
     networks:
       - smart_uis
+    # env_file: .env
     environment:
-      - MONGO_HOST=mongo
-      - BROKER_IP=mqtt_broker
+      # - SPRING_DATA_MONGODB_URI=mongodb://admin:admin@mongo:27017/iot?retryWrites=true
+      - SPRING_DATA_MONGODB_HOST=mongo
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_DATABASE=iot
+      - SPRING_DATA_MONGODB_USER=admin
+      - SPRING_DATA_MONGODB_PASSWORD=admin
+      - BROKER_URL=tcp://activemq:61616
 
 
 networks: 
